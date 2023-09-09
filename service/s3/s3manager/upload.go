@@ -120,6 +120,11 @@ func WithUploaderRequestOptions(opts ...request.Option) func(*Uploader) {
 	}
 }
 
+type ProgressInfo struct {
+	PartNumber int64
+	PartSize   int64
+}
+
 // The Uploader structure that calls Upload(). It is safe to call Upload()
 // on this structure for multiple objects and across concurrent goroutines.
 // Mutating the Uploader's properties is not safe to be done concurrently.
@@ -178,6 +183,12 @@ type Uploader struct {
 
 	// partPool allows for the re-usage of streaming payload part buffers between upload calls
 	partPool byteSlicePool
+
+	// The progress signal channel.
+	progressCh chan ProgressInfo
+
+	// tracker function that can be used to track upload progress
+	TrackFunc func(p <-chan ProgressInfo, size int64)
 }
 
 // NewUploader creates a new Uploader instance to upload objects to S3. Pass In
@@ -416,6 +427,11 @@ func (u *uploader) init() error {
 		u.cfg.MaxUploadParts = MaxUploadParts
 	}
 
+	// Set up the default tracker
+	if u.cfg.TrackFunc == nil {
+		u.cfg.TrackFunc = DefaultTracker
+	}
+
 	// Try to get the total size for some optimizations
 	if err := u.initSize(); err != nil {
 		return err
@@ -590,6 +606,16 @@ func (u *multiuploader) upload(firstBuf io.ReadSeeker, cleanup func()) (*UploadO
 
 	// Create the workers
 	ch := make(chan chunk, u.cfg.Concurrency)
+
+	// Set the total length of the progress recorder
+	recorderLength := u.totalSize/u.cfg.PartSize + 1
+
+	// Progress reporting channel created
+	u.cfg.progressCh = make(chan ProgressInfo, recorderLength)
+
+	// Start the progress reporter with a separate goroutine
+	go u.cfg.TrackFunc(u.cfg.progressCh, recorderLength)
+
 	for i := 0; i < u.cfg.Concurrency; i++ {
 		u.wg.Add(1)
 		go u.readChunk(ch)
@@ -730,6 +756,11 @@ func (u *multiuploader) send(c chunk) error {
 	u.parts = append(u.parts, completed)
 	u.m.Unlock()
 
+	u.cfg.progressCh <- ProgressInfo{
+		PartNumber: n,
+		PartSize:   u.cfg.PartSize,
+	}
+
 	return nil
 }
 
@@ -768,6 +799,7 @@ func (u *multiuploader) fail() {
 
 // complete successfully completes a multipart upload and returns the response.
 func (u *multiuploader) complete() *s3.CompleteMultipartUploadOutput {
+	defer close(u.cfg.progressCh)
 	if u.geterr() != nil {
 		u.fail()
 		return nil

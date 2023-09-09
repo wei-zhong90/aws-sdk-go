@@ -121,9 +121,9 @@ func TestUploadOrderMulti(t *testing.T) {
 	u := s3manager.NewUploaderWithClient(s)
 
 	resp, err := u.Upload(&s3manager.UploadInput{
-		Bucket:               aws.String("Bucket"),
-		Key:                  aws.String("Key - value"),
-		Body:                 bytes.NewReader(buf12MB),
+		Bucket:               aws.String("test-multiparts-tracker-wei"),
+		Key:                  aws.String("test"),
+		Body:                 bytes.NewReader(buf1GB),
 		ServerSideEncryption: aws.String("aws:kms"),
 		SSEKMSKeyId:          aws.String("KmsId"),
 		ContentType:          aws.String("content/type"),
@@ -138,7 +138,7 @@ func TestUploadOrderMulti(t *testing.T) {
 		t.Errorf("Expected %v, but received %v", expected, *ops)
 	}
 
-	if e, a := `https://s3.mock-region.amazonaws.com/Bucket/Key%20-%20value`, resp.Location; e != a {
+	if e, a := `https://test-multiparts-tracker-wei.s3.mock-region.amazonaws.com/test`, resp.Location; e != a {
 		t.Errorf("Expected %q, but received %q", e, a)
 	}
 
